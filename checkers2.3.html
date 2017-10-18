@@ -1,0 +1,484 @@
+<!doctype html>
+<html>
+    <body>
+    </body>
+    <style>
+        .background {
+            background: brown;
+            table-layout: fixed;
+            border-spacing: 0;
+        }
+
+        .whiteSquare {
+            background: lightGray;
+        }
+
+        .background td {
+            padding: 0;
+        }
+        .piece {
+            border-radius: 30px;
+            background: white;
+            border: 1px solid black;
+            position: absolute;
+        }
+
+        .black {
+            background: black;
+            border: 1px solid white;
+        }
+         .king {
+            border: 5px solid goldenRod;
+        }
+    </style>
+    <script>
+        function Game() {
+            this.board = [];
+            this.width = 8;
+            this.height = 8;
+            this.pieces = [];
+            this.isWhiteTurn=true;
+            this.allPossibleMoves=[];
+            this.status = this.finishDelay = null;//for ending the game
+            this.message;
+
+            var black = false;
+            for (var y = 0; y < this.height; y++) {
+                var row = [];
+                for (var x = 0; x < this.width; x++) {
+                    if (black)
+                        row.push("x");
+                    else
+                        row.push(" ");
+                    black = !black;
+                }
+                this.board.push(row);
+                black = !black;
+            }            
+        }
+
+        function Vector(x, y) {
+            this.x = x;
+            this.y = y;
+        }
+
+        Vector.prototype.plus = function(other) {
+            return new Vector(this.x + other.x,this.y + other.y);
+        };
+
+        Vector.prototype.times = function(factor) {
+            return new Vector(this.x * factor,this.y * factor);
+        };
+
+         function Piece(x,y) {
+            this.size = new Vector(0.8,0.8)
+            this.pos = new Vector(x,y);
+            this.lastPos;
+            this.isBlack;
+            this.isKing = false;
+            this.possibleMoves;
+            this.element;
+            this.game;
+            this.canMove=true;
+                       
+        }
+
+         //////////////////////////////////////
+        ///////////the display////////////////
+
+        function elt(name, className) {
+            var elt = document.createElement(name);
+            if (className)
+                elt.className = className;
+            return elt;
+        }
+
+        function DomDisplay(parent, game) {
+            this.wrap = parent.appendChild(elt("div", "game"));
+            this.game = game;
+            this.wrap.appendChild(this.drawBoard());
+            this.piecesLayer = null;
+            this.drawPieceLayer();
+        }
+
+        var scale = 60;
+
+        DomDisplay.prototype.drawBoard = function() {
+            var table = elt("table", "background");
+            table.style.width = this.game.width * scale + "px";
+            this.game.board.forEach(function(row) {
+                var rowElt = table.appendChild(elt("tr"));
+                rowElt.style.height = scale + "px";
+                row.forEach(function(block) {
+                    if (block == " ")
+                        rowElt.appendChild(elt("td", "whiteSquare"));
+                    else
+                        rowElt.appendChild(elt("td"));
+                });
+            });
+            return table;
+        };
+
+        DomDisplay.prototype.drawPiecesOnBoard = function() {
+
+            var startsWithWhiteSquare = true;
+            var smallWrap = elt("div");
+            for (var y = 0; y < 8; y++) {
+                if (y == 3 || y == 4)
+                    continue;
+                for (var x = 0; x < 8; x = x + 2) {
+                    if (startsWithWhiteSquare && x == 0)
+                        x = 1;
+                    var piece = this.buildPiece(x+0.2,y+0.2);
+                   
+                    smallWrap.appendChild(piece.element);
+                    this.game.pieces.push(piece);
+                }
+                startsWithWhiteSquare = !startsWithWhiteSquare;
+            }           
+            return smallWrap;
+        };
+
+        DomDisplay.prototype.buildPiece=function(x,y){
+
+            function separateColors(yIndex) {
+                if (yIndex < 3)
+                    thisClassName = "piece";
+                if (yIndex > 4)
+                    thisClassName = "piece black";
+                return thisClassName;
+            }
+            var piece=new Piece(x,y);
+            var name=separateColors(y);
+
+            if (name == "piece")
+                piece.isBlack = false;
+            else
+                piece.isBlack = true;
+
+            piece.element=elt("div",name);
+
+            piece.element.style.width = piece.size.x * scale + "px";
+            piece.element.style.height = piece.size.y * scale + "px";
+            piece.element.style.left = piece.pos.x * scale + "px";
+            piece.element.style.top = piece.pos.y * scale + "px";
+
+            piece.element.self=piece;
+            piece.game=this.game;
+           
+            return piece;
+        };
+
+        DomDisplay.prototype.drawPieceLayer = function() {
+            if (this.piecesLayer)
+                this.wrap.removeChild(this.piecesLayer);
+            this.piecesLayer = this.wrap.appendChild(this.drawPiecesOnBoard());
+            
+        };
+
+        ///////////////////////////////////////////////////
+        //////////the game//////////////////////////
+
+        Game.prototype.initPieceMovement=function(targetForListener){
+            var isMoving=false;
+
+            function move(){
+                isMoving=true;
+                this.style.zIndex = 1;
+                this.style.left = event.clientX - 24 + "px";//can be as pos or style top/left
+                this.style.top = event.clientY - 24 + "px";
+                this.self.pos.x=event.clientX/60-0.4;
+                this.self.pos.y=event.clientY/60-0.4;
+            }
+
+            function release(){
+                this.style.zIndex=0;
+                this.removeEventListener("mousemove",move);
+                this.self.toRightPlace();
+                isMoving=false;
+                this.removeEventListener("mouseup",release);
+                thisGame.allPossibleMoves.length=0;// this delete all items in array. also could give it an empty array. wonder what is more clear
+                    thisGame.findAllPossibleMoves();
+                    var finished=thisGame.isGameFinished();
+                    if (finished) 
+                        thisGame.endGame();
+            }
+
+           var thisGame=this;
+           this.message=elt("h2");
+           this.message.textContent="whites turn";
+           document.body.appendChild(this.message);
+           
+            targetForListener.addEventListener("mousedown", function(event){
+               
+                var eventTarget=event.target;
+                
+                if(!isMoving)
+                    eventTarget.self.lastPos=new Vector(eventTarget.self.pos.x,eventTarget.self.pos.y);
+
+                if (eventTarget.self.isBlack && !thisGame.isWhiteTurn ||
+                    !eventTarget.self.isBlack && thisGame.isWhiteTurn){
+                      
+                    eventTarget.self.findPossibleMoves(thisGame);
+                    var moves= eventTarget.self.possibleMoves.some(function(move){
+                         return move;
+                     });   
+                    if(moves){
+                            
+                             if(eventTarget.self.canMove){
+                        eventTarget.addEventListener("mousemove",move);
+                        eventTarget.addEventListener("mouseup",release);
+                             }
+                    }
+                }
+            });
+
+        };
+
+        Piece.prototype.findPossibleMoves=function(game){
+            
+           if (this.isKing)//should add this in the end, the functions are identical
+                this.findPossibleMovesForKing(game);
+           else{  
+                var x = Math.round(this.pos.x);
+                var y = Math.round(this.pos.y);
+                this.possibleMoves = [];
+
+                var nextY;
+                if (this.isBlack){
+                    nextY=y-2;
+                    y -= 1;
+                }
+                else {
+                    nextY=y+2;
+                    y += 1;
+                }
+
+                this.possibleMoves.push(game.toWhereToMove(x+1,y,this,x+2,nextY));
+                this.possibleMoves.push(game.toWhereToMove(x-1,y,this,x-2,nextY));
+            }
+
+        };
+        Piece.prototype.findPossibleMovesForKing=function(game){
+          
+             var x = Math.round(this.pos.x);
+             var y = Math.round(this.pos.y);
+             this.possibleMoves = [];
+
+            this.possibleMoves.push(game.toWhereToMove(x+1,y+1,this,x+2,y+2));
+            this.possibleMoves.push(game.toWhereToMove(x-1,y+1,this,x-2,y+2));
+            this.possibleMoves.push(game.toWhereToMove(x+1,y-1,this,x+2,y-2));
+            this.possibleMoves.push(game.toWhereToMove(x-1,y-1,this,x-2,y-2)); 
+                
+        };
+
+        Game.prototype.toWhereToMove=function(x,y,movingPiece,nextX,nextY){
+          //x,y are the next move. if there is a piece there already, the next move is next x, next y. maybe should have called the function specifyWhereTo
+            if (x < 0 || x >= 8 || y < 0 || y >= 8)
+                return;
+            
+            var piece=this.pieceInSquare(x,y);//maybe call the function findPieceToEat
+
+            if (!piece)
+                return{x:x, y:y, eating: false};
+
+            else {  
+                if ((piece.isBlack && movingPiece.isBlack)||
+                    (!piece.isBlack && !movingPiece.isBlack))
+                    return;
+
+                else {
+                    if (!(nextX < 0 || nextX >= 8 || nextY < 0 || nextY >= 8))
+                        if (!this.pieceInSquare(nextX,nextY))
+                            return {x:nextX, y: nextY, eating: true, pieceToEat:piece};                   
+                }
+            }
+        };
+
+        Game.prototype.pieceInSquare=function(x,y){
+            var middle = new Vector(x + 0.5,y + 0.5);
+            
+            var found=this.pieces.filter(function(piece){
+                if(piece)
+                if( piece.pos.x < middle.x && piece.pos.x + piece.size.x > middle.x &&
+                    piece.pos.y < middle.y && piece.pos.y + piece.size.y > middle.y)
+                        return piece;
+            });
+            if(found[0])
+                return found[0];
+            else
+                return null;
+        };
+
+        Piece.prototype.toRightPlace=function(){//this is the function of the move.
+            var toX,toY;           
+            toX=toY-1;//how and why
+            var currentX,currentY;
+            currentX=Math.round(this.pos.x)
+            currentY=Math.round(this.pos.y)
+            var found=false
+
+            for(var i=0; i<this.possibleMoves.length && !found; i++){
+                if (this.possibleMoves[i]){
+                    toX=this.possibleMoves[i].x;
+                    toY=this.possibleMoves[i].y;
+                    eating=this.possibleMoves[i].eating;
+
+                    if (currentX==toX && currentY==toY){
+                        found=true;
+                        this.updatePosition(toX,toY);
+                            if (eating)
+                                this.game.eat(this.possibleMoves[i].pieceToEat,this);//make sure this reference is also gone
+                            else
+                                this.game.burnForNotEatingWhenPossible(this);
+                    
+                            this.game.promoteIfNeeded(this);
+                            this.game.isWhiteTurn=!this.game.isWhiteTurn; 
+                            this.game.message.textContent=this.game.isWhiteTurn?"whites turn":"blacks turn";
+                    }
+                }    
+            }
+
+            if(!found)
+                this.updatePosition(this.lastPos.x-0.2,this.lastPos.y-0.2);
+            
+        };
+
+        Piece.prototype.updatePosition=function(x,y){
+           
+            this.element.style.left = (x+0.2)*scale + "px";
+            this.element.style.top = (y+0.2)*scale + "px";
+            this.pos=new Vector(x+0.2, y+0.2);
+        };
+
+        Game.prototype.eat=function(pieceToEat,movingPiece){
+			//get rid of all references of pieceToEat
+		   this.pieces.forEach(function(piece){
+									if(piece)
+										piece.canMove=true;
+            });
+
+            pieceToEat.element.parentElement.removeChild(pieceToEat.element);
+            pieceToEat.element=null;
+
+            for(var i=0;i<this.pieces.length;i++){
+                if (this.pieces[i]==pieceToEat)
+                   this.pieces[i]=null;
+            }
+            pieceToEat=null;
+			
+			//continue the move-for double eating. should be in a different function.
+            movingPiece.possibleMoves=null;
+            movingPiece.lastPos=new Vector(movingPiece.pos.x,movingPiece.pos.y);
+            movingPiece.findPossibleMoves(this);
+           
+            if(movingPiece.possibleMoves[0] && movingPiece.possibleMoves[0].eating ||
+               movingPiece.possibleMoves[1] && movingPiece.possibleMoves[1].eating){
+
+                this.isWhiteTurn=!this.isWhiteTurn;
+
+                if (movingPiece.possibleMoves[0] && !movingPiece.possibleMoves[0].eating)//but I just checked this. I'm still inside the if
+                    movingPiece.possibleMoves[0]=null;
+
+                if (movingPiece.possibleMoves[1] && !movingPiece.possibleMoves[1].eating)
+                    movingPiece.possibleMoves[1]=null;
+
+                this.pieces.forEach(function(piece){
+                    if(piece)
+                        if (piece!=movingPiece)
+							piece.canMove=false;
+                });
+              
+            }
+         
+        };
+        Game.prototype.burnForNotEatingWhenPossible=function(){//maybe could have a function called kill piece because this is duplicate
+               
+               var piece;
+               var couldEat=this.allPossibleMoves.some(function(move){
+                       if(move.eating==true)
+                           piece=move.movingPiece;
+                       return (move.eating==true);
+               });
+
+               if (couldEat){
+                   piece.element.parentElement.removeChild(piece.element);
+                   piece.element=null;
+                   for(var i=0;i<this.pieces.length;i++){
+                        if (this.pieces[i]==piece)
+                            this.pieces[i]=null;
+                   }
+                   this.allPossibleMoves.length=0;
+                   piece=null;    
+               }
+			   //a message would make this more user friendly
+        };
+
+        Game.prototype.promoteIfNeeded=function(piece){
+            var lastY;
+            if(piece.isBlack)
+                lastY=0;
+            else
+                lastY=7;
+
+            if(Math.round(piece.pos.y)==lastY){
+                piece.isKing=true;
+                piece.element.className+=" king";
+                piece.element.style.width = piece.size.x * scale -6 + "px";
+                piece.element.style.height = piece.size.y * scale -6 + "px";
+            }
+        }
+
+        Game.prototype.findAllPossibleMoves=function(){//should be findAllPossibleMovesForNextTurn or something
+            var thisGame=this;
+            this.pieces.forEach(function(piece){
+                    if(piece)
+                if(thisGame.isWhiteTurn && !piece.isBlack||!thisGame.isWhiteTurn && piece.isBlack){
+                    var moves=[];
+                    piece.findPossibleMoves(thisGame);
+                    piece.possibleMoves.forEach(function(move){
+                        if(move)
+                            thisGame.allPossibleMoves.push(
+                                  { x:move.x,
+                                    y:move.y,
+                                    movingPiece: piece,
+                                    eating:move.eating
+                                  }
+                         );
+                    });
+                }
+            });
+        };
+
+        Game.prototype.endGame=function(){
+            this.message.textContent="game ended";
+            document.body.appendChild(this.message);
+            if (this.isWhiteTurn)
+            this.message.textContent=" black won! press 'f5' to play again";//erases the last content? maybe +=
+            else
+            this.message.textContent=" white won! press 'f5' to play again";//here too
+
+          
+        };
+
+        Game.prototype.isGameFinished=function(){
+            var finished=true
+                    for(var i=0;i<this.allPossibleMoves.length;i++)
+                        if(this.allPossibleMoves[i])//could check with filter or with some. or at least not go all around the moves. could also add a line for find possible moves in next turn if this function only checks that but then it is a 2 job function, and is hard to find
+                            finished=false;
+            return finished;  
+        };
+
+        function runGame(Game, Display) {
+            var display = new Display(document.body,Game);
+            display.game.initPieceMovement(display.piecesLayer);//is startPlaying more clear?
+        }
+
+        ////////////////////////////////////////////////////
+        ///////activate the game////////////////////////////
+       
+        var checkers = new Game();
+        runGame(checkers, DomDisplay);
+    
+    </script>
+</html>
